@@ -16,7 +16,7 @@ COPY artifacts/phantom/ ./artifacts/phantom/
 COPY scripts/ ./scripts/
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 # Build api-server
 RUN pnpm --filter @workspace/api-server run build
