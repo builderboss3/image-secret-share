@@ -1,0 +1,44 @@
+# compiled output
+tmp
+out-tsc
+*.tsbuildinfo
+
+# dependencies
+node_modules
+.pnpm-store
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+npm-debug.log
+yarn-error.log
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Replit specific
+.cache/
+.local/
+.config/
+.replitignore
+
+# Keep api-server dist but ignore phantom dist (built during Railway deploy)
+# We DO want api-server dist committed (optional but safe to exclude and rebuild)
+# All dist folders are rebuilt on Railway
+artifacts/api-server/dist/

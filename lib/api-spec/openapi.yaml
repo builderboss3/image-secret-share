@@ -1,0 +1,545 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: Phantom — Secret Image Messenger API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: messages
+    description: Secret message operations
+  - name: images
+    description: Image generation operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /messages:
+    get:
+      operationId: listMessages
+      tags: [messages]
+      summary: List sent messages for the authenticated user
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+    post:
+      operationId: createMessage
+      tags: [messages]
+      summary: Create a new secret message embedded in an image
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessageBody"
+      responses:
+        "201":
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/stats:
+    get:
+      operationId: getMessageStats
+      tags: [messages]
+      summary: Get dashboard stats for sent messages
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageStats"
+
+  /messages/decode-image:
+    post:
+      operationId: decodeImage
+      tags: [messages]
+      summary: Decode a message from an uploaded carrier image — no ID needed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecodeImageBody"
+      responses:
+        "200":
+          description: Message status extracted from image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageDecodeStatus"
+        "400":
+          description: Not a Phantom image or invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Locked — sender has not granted access
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/{id}:
+    get:
+      operationId: getMessage
+      tags: [messages]
+      summary: Get a specific message (sender view with receipt)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteMessage
+      tags: [messages]
+      summary: Delete a message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /messages/{id}/status:
+    get:
+      operationId: getMessageStatus
+      tags: [messages]
+      summary: Get message status for the receiver (check if locked, if already read)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageStatus"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/{id}/decode:
+    post:
+      operationId: decodeMessage
+      tags: [messages]
+      summary: Decode and reveal the hidden message (one-time, requires access)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Decoded message content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecodeResult"
+        "403":
+          description: Locked or already read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/{id}/read:
+    post:
+      operationId: markMessageRead
+      tags: [messages]
+      summary: Mark message as read with timing information
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkReadBody"
+      responses:
+        "200":
+          description: Message marked as read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/{id}/grant-access:
+    post:
+      operationId: grantMessageAccess
+      tags: [messages]
+      summary: Sender grants access to a locked message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Access granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /messages/{id}/revoke-access:
+    post:
+      operationId: revokeMessageAccess
+      tags: [messages]
+      summary: Sender revokes access to a locked message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Access revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /images/generate:
+    post:
+      operationId: generateCarrierImage
+      tags: [images]
+      summary: Generate a carrier image (solid color, gradient, noise pattern)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateImageBody"
+      responses:
+        "200":
+          description: Generated image as base64 PNG
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratedImage"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        senderId:
+          type: string
+        senderEmail:
+          type: ["string", "null"]
+        recipientHint:
+          type: ["string", "null"]
+        imageData:
+          type: string
+          description: Base64-encoded PNG of the carrier image with hidden message
+        isLocked:
+          type: boolean
+          description: Whether the message requires sender approval before decoding
+        accessGranted:
+          type: boolean
+          description: Whether the sender has granted access (for locked messages)
+        isRead:
+          type: boolean
+          description: Whether the message has been read (one-time)
+        readAt:
+          type: ["string", "null"]
+          description: ISO timestamp when it was read
+        readDurationSeconds:
+          type: ["number", "null"]
+          description: How many seconds the receiver spent reading
+        createdAt:
+          type: string
+        deletedMessageAt:
+          type: ["string", "null"]
+          description: When the message content was deleted after reading
+      required:
+        - id
+        - senderId
+        - imageData
+        - isLocked
+        - accessGranted
+        - isRead
+        - createdAt
+
+    MessageStatus:
+      type: object
+      properties:
+        id:
+          type: string
+        isLocked:
+          type: boolean
+        accessGranted:
+          type: boolean
+        isRead:
+          type: boolean
+        senderEmail:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - isLocked
+        - accessGranted
+        - isRead
+        - createdAt
+
+    DecodeResult:
+      type: object
+      properties:
+        id:
+          type: string
+        messageText:
+          type: string
+          description: The revealed secret message
+        decodedAt:
+          type: string
+      required:
+        - id
+        - messageText
+        - decodedAt
+
+    ImageDecodeStatus:
+      type: object
+      properties:
+        id:
+          type: string
+        isRead:
+          type: boolean
+        isLocked:
+          type: boolean
+        accessGranted:
+          type: boolean
+        messageText:
+          type: ["string", "null"]
+          description: Decoded message text if accessible and unread
+        senderEmail:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - isRead
+        - isLocked
+        - accessGranted
+        - createdAt
+
+    DecodeImageBody:
+      type: object
+      properties:
+        imageData:
+          type: string
+          description: Base64-encoded image uploaded by receiver
+      required:
+        - imageData
+
+    MessageStats:
+      type: object
+      properties:
+        totalSent:
+          type: integer
+        totalRead:
+          type: integer
+        totalPending:
+          type: integer
+        totalLocked:
+          type: integer
+        recentMessages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+      required:
+        - totalSent
+        - totalRead
+        - totalPending
+        - totalLocked
+        - recentMessages
+
+    CreateMessageBody:
+      type: object
+      properties:
+        messageText:
+          type: string
+          description: The secret message to hide
+        imageData:
+          type: string
+          description: Base64-encoded carrier image (PNG)
+        recipientHint:
+          type: ["string", "null"]
+          description: Optional hint about who the message is for
+        isLocked:
+          type: boolean
+          description: Whether to require sender approval before decoding
+          default: false
+      required:
+        - messageText
+        - imageData
+
+    MarkReadBody:
+      type: object
+      properties:
+        readDurationSeconds:
+          type: number
+          description: How many seconds the receiver spent reading
+      required:
+        - readDurationSeconds
+
+    GenerateImageBody:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [solid, gradient, noise, grid, dots]
+          description: Type of image to generate
+        color1:
+          type: ["string", "null"]
+          description: Primary color as hex
+        color2:
+          type: ["string", "null"]
+          description: Secondary color for gradients
+        width:
+          type: integer
+          default: 800
+        height:
+          type: integer
+          default: 600
+      required:
+        - type
+
+    GeneratedImage:
+      type: object
+      properties:
+        imageData:
+          type: string
+          description: Base64-encoded PNG image
+        width:
+          type: integer
+        height:
+          type: integer
+        type:
+          type: string
+      required:
+        - imageData
+        - width
+        - height
+        - type
