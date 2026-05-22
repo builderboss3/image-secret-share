@@ -1,30 +1,41 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { verifyPasscode } from "@/lib/auth";
+import { register, login } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Ghost, Eye, EyeOff, Terminal, Lock, Link } from "lucide-react";
+import { Ghost, Eye, EyeOff, Terminal, User, Lock } from "lucide-react";
+
+type Tab = "login" | "register";
 
 export default function SignInPage() {
   const [, setLocation] = useLocation();
   const { authorize } = useAuth();
-  const [passcode, setPasscode] = useState("");
-  const [show, setShow] = useState(false);
+  const [tab, setTab] = useState<Tab>("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (tab === "register" && password !== confirm) {
+      setError("Passwords don't match");
+      return;
+    }
     setIsLoading(true);
     try {
-      await verifyPasscode(passcode);
-      authorize();
+      const user = tab === "register"
+        ? await register(username, password)
+        : await login(username, password);
+      authorize(user);
       setLocation("/dashboard");
     } catch (err: any) {
-      setError(err.message ?? "Wrong passcode");
+      setError(err.message ?? "Something went wrong");
     } finally {
       setIsLoading(false);
     }
@@ -49,13 +60,40 @@ export default function SignInPage() {
           <h1 className="text-2xl font-bold font-mono tracking-widest text-primary glitch-text" data-text="PHANTOM">
             PHANTOM
           </h1>
-          <p className="text-xs font-mono text-muted-foreground mt-1 tracking-widest">SECURE TERMINAL ACCESS</p>
+          <p className="text-xs font-mono text-muted-foreground mt-1 tracking-widest">STEGANOGRAPHIC INTELLIGENCE PLATFORM</p>
         </div>
 
         <div className="cyber-panel p-8 space-y-6">
-          <div className="border-b border-primary/20 pb-4 flex items-center gap-2">
+          <div className="flex border border-primary/20 rounded overflow-hidden">
+            <button
+              type="button"
+              onClick={() => { setTab("login"); setError(null); }}
+              className={`flex-1 py-2 text-xs font-mono tracking-widest transition-colors ${
+                tab === "login"
+                  ? "bg-primary/20 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              LOGIN
+            </button>
+            <button
+              type="button"
+              onClick={() => { setTab("register"); setError(null); }}
+              className={`flex-1 py-2 text-xs font-mono tracking-widest transition-colors ${
+                tab === "register"
+                  ? "bg-primary/20 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              REGISTER
+            </button>
+          </div>
+
+          <div className="border-b border-primary/20 pb-3 flex items-center gap-2">
             <Terminal className="w-4 h-4 text-primary" />
-            <span className="text-xs font-mono text-primary tracking-widest">ENTER ACCESS CODE</span>
+            <span className="text-xs font-mono text-primary tracking-widest">
+              {tab === "login" ? "ACCESS TERMINAL" : "CREATE IDENTITY"}
+            </span>
           </div>
 
           {error && (
@@ -64,45 +102,90 @@ export default function SignInPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label className="font-mono text-xs text-muted-foreground flex items-center gap-2">
-                <Lock className="w-3 h-3" /> ACCESS CODE
+                <User className="w-3 h-3" /> USERNAME
+              </Label>
+              <Input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="your_codename"
+                required
+                autoFocus
+                autoComplete="username"
+                className="font-mono text-sm bg-background/80 border-primary/20 focus:border-primary/60"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="font-mono text-xs text-muted-foreground flex items-center gap-2">
+                <Lock className="w-3 h-3" /> PASSWORD
               </Label>
               <div className="relative">
                 <Input
-                  type={show ? "text" : "password"}
-                  value={passcode}
-                  onChange={(e) => setPasscode(e.target.value)}
-                  placeholder="Enter your secret code"
+                  type={showPw ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={tab === "register" ? "Min. 6 characters" : "••••••••"}
                   required
-                  autoFocus
+                  autoComplete={tab === "register" ? "new-password" : "current-password"}
                   className="font-mono text-sm bg-background/80 border-primary/20 focus:border-primary/60 pr-10"
                 />
-                <button type="button" onClick={() => setShow(!show)}
+                <button type="button" onClick={() => setShowPw(!showPw)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="text-xs font-mono text-muted-foreground/50 mt-1">
-                Code is set via <code className="text-primary/60">DASHBOARD_PASSCODE</code> env var
-              </p>
             </div>
 
-            <Button type="submit" disabled={isLoading || !passcode}
+            {tab === "register" && (
+              <div className="space-y-2">
+                <Label className="font-mono text-xs text-muted-foreground flex items-center gap-2">
+                  <Lock className="w-3 h-3" /> CONFIRM PASSWORD
+                </Label>
+                <Input
+                  type={showPw ? "text" : "password"}
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  placeholder="Repeat password"
+                  required
+                  autoComplete="new-password"
+                  className="font-mono text-sm bg-background/80 border-primary/20 focus:border-primary/60"
+                />
+              </div>
+            )}
+
+            <Button type="submit" disabled={isLoading || !username || !password}
               className="w-full font-mono h-11 text-sm tracking-widest cyber-button">
               {isLoading ? (
                 <span className="flex items-center gap-2">
                   <span className="w-3 h-3 border border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                  VERIFYING...
+                  {tab === "register" ? "CREATING..." : "VERIFYING..."}
                 </span>
-              ) : "AUTHENTICATE"}
+              ) : tab === "register" ? "CREATE ACCOUNT" : "AUTHENTICATE"}
             </Button>
           </form>
 
           <div className="border-t border-primary/10 pt-4 text-center">
-            <a href="/decode" className="text-xs font-mono text-muted-foreground/50 hover:text-muted-foreground transition-colors">
-              Decode a received image — no code needed →
+            <p className="text-xs font-mono text-muted-foreground/50">
+              {tab === "login" ? (
+                <>No account?{" "}
+                  <button onClick={() => setTab("register")} className="text-primary/60 hover:text-primary underline">
+                    Register here
+                  </button>
+                </>
+              ) : (
+                <>Already registered?{" "}
+                  <button onClick={() => setTab("login")} className="text-primary/60 hover:text-primary underline">
+                    Login here
+                  </button>
+                </>
+              )}
+            </p>
+            <a href="/decode" className="block mt-2 text-xs font-mono text-muted-foreground/40 hover:text-muted-foreground transition-colors">
+              Decode a received image — no account needed →
             </a>
           </div>
         </div>

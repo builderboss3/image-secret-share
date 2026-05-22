@@ -1,24 +1,19 @@
 import { Router } from "express";
-import jwt from "jsonwebtoken";
 
 const router = Router();
-const JWT_SECRET = process.env.SESSION_SECRET ?? "phantom_dev_secret_change_me";
 
-// POST /auth/verify — check passcode, return JWT
+// POST /auth/register — client handles storage; server just validates input
+router.post("/auth/register", (req: any, res: any) => {
+  const { username } = req.body ?? {};
+  if (!username || typeof username !== "string" || username.trim().length < 3) {
+    return res.status(400).json({ error: "Username must be at least 3 characters" });
+  }
+  res.json({ success: true });
+});
+
+// POST /auth/verify — kept for backwards compat, always returns success
 router.post("/auth/verify", (req: any, res: any) => {
-  const { passcode } = req.body ?? {};
-
-  const expected = process.env.DASHBOARD_PASSCODE;
-  if (!expected) {
-    return res.status(503).json({ error: "DASHBOARD_PASSCODE is not configured on the server" });
-  }
-
-  if (!passcode || passcode !== expected) {
-    return res.status(401).json({ error: "Wrong passcode" });
-  }
-
-  const token = jwt.sign({ sub: "owner", authorized: true }, JWT_SECRET, { expiresIn: "30d" });
-  res.json({ token });
+  res.json({ success: true });
 });
 
 export default router;

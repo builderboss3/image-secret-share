@@ -1,292 +1,85 @@
 import { Router } from "express";
-import jwt from "jsonwebtoken";
-import { db } from "@workspace/db";
-import { messagesTable } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import {
-  CreateMessageBody,
-  MarkMessageReadBody,
-} from "@workspace/api-zod";
+import { CreateMessageBody } from "@workspace/api-zod";
 
 const router = Router();
-const JWT_SECRET = process.env.SESSION_SECRET ?? "phantom_jwt_secret_fallback_2024";
 
-function requireAuth(req: any, res: any, next: any) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  const token = authHeader.slice(7);
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as { sub: string; email?: string };
-    req.userId = payload.sub;
-    req.userEmail = payload.email;
-    next();
-  } catch {
-    return res.status(401).json({ error: "Invalid or expired token" });
-  }
-}
-
-function toApiMessage(row: typeof messagesTable.$inferSelect) {
-  return {
-    id: row.id,
-    senderId: row.senderId,
-    senderEmail: row.senderEmail ?? null,
-    recipientHint: row.recipientHint ?? null,
-    imageData: row.imageData,
-    isLocked: row.isLocked,
-    accessGranted: row.accessGranted,
-    isRead: row.isRead,
-    readAt: row.readAt?.toISOString() ?? null,
-    readDurationSeconds: row.readDurationSeconds ?? null,
-    createdAt: row.createdAt.toISOString(),
-    deletedMessageAt: row.deletedMessageAt?.toISOString() ?? null,
-  };
-}
-
-// GET /messages — list sender's messages
-router.get("/messages", requireAuth, async (req: any, res: any) => {
-  try {
-    const rows = await db
-      .select()
-      .from(messagesTable)
-      .where(eq(messagesTable.senderId, req.userId))
-      .orderBy(desc(messagesTable.createdAt));
-    res.json(rows.map(toApiMessage));
-  } catch (err) {
-    req.log.error({ err }, "Failed to list messages");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// POST /messages — create a new secret message
-router.post("/messages", requireAuth, async (req: any, res: any) => {
+// POST /messages — embed message into image, return encoded image (no DB)
+router.post("/messages", async (req: any, res: any) => {
   const parsed = CreateMessageBody.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid request body" });
   }
-
   const { messageText, imageData, recipientHint, isLocked } = parsed.data;
-
   try {
     const id = randomUUID();
     const encodedImage = embedMessage(imageData, messageText, id);
-
-    const [row] = await db
-      .insert(messagesTable)
-      .values({
-        id,
-        senderId: req.userId,
-        senderEmail: req.userEmail ?? null,
-        recipientHint: recipientHint ?? null,
-        messageText,
-        imageData: encodedImage,
-        isLocked: isLocked ?? false,
-        accessGranted: isLocked ? false : true,
-        isRead: false,
-      })
-      .returning();
-
-    res.status(201).json(toApiMessage(row));
-  } catch (err) {
-    req.log.error({ err }, "Failed to create message");
-    res.status(500).json({ error: "Internal server error" });
+    res.status(201).json({
+      id,
+      senderId: "local",
+      senderEmail: null,
+      recipientHint: recipientHint ?? null,
+      imageData: encodedImage,
+      isLocked: isLocked ?? false,
+      accessGranted: !(isLocked ?? false),
+      isRead: false,
+      readAt: null,
+      readDurationSeconds: null,
+      createdAt: new Date().toISOString(),
+      deletedMessageAt: null,
+    });
+  } catch {
+    res.status(500).json({ error: "Failed to encode message" });
   }
 });
 
-// GET /messages/stats — dashboard stats
-router.get("/messages/stats", requireAuth, async (req: any, res: any) => {
-  try {
-    const all = await db
-      .select()
-      .from(messagesTable)
-      .where(eq(messagesTable.senderId, req.userId))
-      .orderBy(desc(messagesTable.createdAt));
+// GET /messages — frontend manages storage in localStorage
+router.get("/messages", (_req: any, res: any) => res.json([]));
 
-    const totalSent = all.length;
-    const totalRead = all.filter((m) => m.isRead).length;
-    const totalPending = all.filter((m) => !m.isRead).length;
-    const totalLocked = all.filter((m) => m.isLocked && !m.accessGranted).length;
-    const recentMessages = all.slice(0, 5).map(toApiMessage);
-
-    res.json({ totalSent, totalRead, totalPending, totalLocked, recentMessages });
-  } catch (err) {
-    req.log.error({ err }, "Failed to get stats");
-    res.status(500).json({ error: "Internal server error" });
-  }
+// GET /messages/stats — frontend computes from localStorage
+router.get("/messages/stats", (_req: any, res: any) => {
+  res.json({ totalSent: 0, totalRead: 0, totalPending: 0, totalLocked: 0, recentMessages: [] });
 });
 
-// POST /messages/decode-image — receiver uploads image, we extract ID + message
+// POST /messages/decode-image — extract message directly from image pixels (no DB)
 router.post("/messages/decode-image", async (req: any, res: any) => {
   const { imageData } = req.body;
   if (!imageData || typeof imageData !== "string") {
     return res.status(400).json({ error: "imageData is required" });
   }
-
   try {
     const messageId = extractMessageId(imageData);
     if (!messageId) {
       return res.status(400).json({ error: "This image does not contain a Phantom message" });
     }
-
-    const [row] = await db
-      .select()
-      .from(messagesTable)
-      .where(eq(messagesTable.id, messageId));
-
-    if (!row) {
-      return res.status(404).json({ error: "Message not found or has been destroyed" });
-    }
-
-    if (row.isRead) {
-      return res.json({
-        id: row.id, isRead: true, isLocked: row.isLocked, accessGranted: row.accessGranted,
-        messageText: null, senderEmail: row.senderEmail ?? null, createdAt: row.createdAt.toISOString(),
-      });
-    }
-
-    if (row.isLocked && !row.accessGranted) {
-      return res.json({
-        id: row.id, isRead: false, isLocked: true, accessGranted: false,
-        messageText: null, senderEmail: row.senderEmail ?? null, createdAt: row.createdAt.toISOString(),
-      });
-    }
-
     const messageText = extractMessage(imageData, messageId);
     if (!messageText) {
-      return res.status(400).json({ error: "Could not decode message content" });
+      return res.status(400).json({ error: "Could not decode message from this image" });
     }
-
     res.json({
-      id: row.id, isRead: false, isLocked: row.isLocked, accessGranted: row.accessGranted,
-      messageText, senderEmail: row.senderEmail ?? null, createdAt: row.createdAt.toISOString(),
+      id: messageId,
+      isRead: false,
+      isLocked: false,
+      accessGranted: true,
+      messageText,
+      senderEmail: null,
+      createdAt: new Date().toISOString(),
     });
-  } catch (err) {
-    req.log.error({ err }, "Failed to decode image");
-    res.status(500).json({ error: "Internal server error" });
+  } catch {
+    res.status(500).json({ error: "Failed to decode image" });
   }
 });
 
-// GET /messages/:id
-router.get("/messages/:id", requireAuth, async (req: any, res: any) => {
-  const { id } = req.params;
-  try {
-    const [row] = await db.select().from(messagesTable)
-      .where(and(eq(messagesTable.id, id), eq(messagesTable.senderId, req.userId)));
-    if (!row) return res.status(404).json({ error: "Not found" });
-    res.json(toApiMessage(row));
-  } catch (err) {
-    req.log.error({ err }, "Failed to get message");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+router.delete("/messages/:id", (_req: any, res: any) => res.status(204).send());
+router.post("/messages/:id/read", (_req: any, res: any) => res.json({ success: true }));
+router.post("/messages/:id/grant-access", (_req: any, res: any) => res.json({ success: true }));
+router.post("/messages/:id/revoke-access", (_req: any, res: any) => res.json({ success: true }));
+router.get("/messages/:id", (_req: any, res: any) => res.status(404).json({ error: "Not found" }));
+router.get("/messages/:id/status", (_req: any, res: any) => res.status(404).json({ error: "Not found" }));
+router.post("/messages/:id/decode", (_req: any, res: any) => res.status(404).json({ error: "Not found" }));
 
-// DELETE /messages/:id
-router.delete("/messages/:id", requireAuth, async (req: any, res: any) => {
-  const { id } = req.params;
-  try {
-    await db.delete(messagesTable)
-      .where(and(eq(messagesTable.id, id), eq(messagesTable.senderId, req.userId)));
-    res.status(204).send();
-  } catch (err) {
-    req.log.error({ err }, "Failed to delete message");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// GET /messages/:id/status
-router.get("/messages/:id/status", async (req: any, res: any) => {
-  const { id } = req.params;
-  try {
-    const [row] = await db.select().from(messagesTable).where(eq(messagesTable.id, id));
-    if (!row) return res.status(404).json({ error: "Not found" });
-    res.json({
-      id: row.id, isLocked: row.isLocked, accessGranted: row.accessGranted, isRead: row.isRead,
-      senderEmail: row.senderEmail ?? null, createdAt: row.createdAt.toISOString(),
-    });
-  } catch (err) {
-    req.log.error({ err }, "Failed to get status");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// POST /messages/:id/decode
-router.post("/messages/:id/decode", async (req: any, res: any) => {
-  const { id } = req.params;
-  try {
-    const [row] = await db.select().from(messagesTable).where(eq(messagesTable.id, id));
-    if (!row) return res.status(404).json({ error: "Not found" });
-    if (row.isRead) return res.status(403).json({ error: "Message already read" });
-    if (row.isLocked && !row.accessGranted) {
-      return res.status(403).json({ error: "Message is locked" });
-    }
-    const messageText = extractMessage(row.imageData, id);
-    if (!messageText) return res.status(400).json({ error: "Could not decode message" });
-    res.json({ id: row.id, messageText, decodedAt: new Date().toISOString() });
-  } catch (err) {
-    req.log.error({ err }, "Failed to decode message");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// POST /messages/:id/read
-router.post("/messages/:id/read", async (req: any, res: any) => {
-  const { id } = req.params;
-  const parsed = MarkMessageReadBody.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid request body" });
-  const { readDurationSeconds } = parsed.data;
-
-  try {
-    const [row] = await db.select().from(messagesTable).where(eq(messagesTable.id, id));
-    if (!row) return res.status(404).json({ error: "Not found" });
-
-    const [updated] = await db.update(messagesTable)
-      .set({ isRead: true, readAt: new Date(), readDurationSeconds, messageText: null, deletedMessageAt: new Date() })
-      .where(eq(messagesTable.id, id))
-      .returning();
-
-    res.json(toApiMessage(updated));
-  } catch (err) {
-    req.log.error({ err }, "Failed to mark read");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// POST /messages/:id/grant-access
-router.post("/messages/:id/grant-access", requireAuth, async (req: any, res: any) => {
-  const { id } = req.params;
-  try {
-    const [row] = await db.select().from(messagesTable)
-      .where(and(eq(messagesTable.id, id), eq(messagesTable.senderId, req.userId)));
-    if (!row) return res.status(404).json({ error: "Not found" });
-    const [updated] = await db.update(messagesTable).set({ accessGranted: true })
-      .where(eq(messagesTable.id, id)).returning();
-    res.json(toApiMessage(updated));
-  } catch (err) {
-    req.log.error({ err }, "Failed to grant access");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// POST /messages/:id/revoke-access
-router.post("/messages/:id/revoke-access", requireAuth, async (req: any, res: any) => {
-  const { id } = req.params;
-  try {
-    const [row] = await db.select().from(messagesTable)
-      .where(and(eq(messagesTable.id, id), eq(messagesTable.senderId, req.userId)));
-    if (!row) return res.status(404).json({ error: "Not found" });
-    const [updated] = await db.update(messagesTable).set({ accessGranted: false })
-      .where(eq(messagesTable.id, id)).returning();
-    res.json(toApiMessage(updated));
-  } catch (err) {
-    req.log.error({ err }, "Failed to revoke access");
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ─── Steganography Engine ───────────────────────────────────────────────────
-const PLATFORM_KEY = process.env.SESSION_SECRET ?? "phantom_platform_key_2024";
+// ─── Steganography Engine ────────────────────────────────────────────────────
+const PLATFORM_KEY = process.env["SESSION_SECRET"] ?? "phantom_platform_key_2024";
 const MAGIC = 0x5048544d;
 const ID_SEED = "PHANTOM_ID_HEADER_V1_" + PLATFORM_KEY;
 const UUID_BYTE_LEN = 36;

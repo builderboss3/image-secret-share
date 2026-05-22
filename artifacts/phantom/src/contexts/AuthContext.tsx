@@ -1,26 +1,27 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
-import { getToken, clearToken } from "@/lib/auth";
+import { getSession, clearSession, type PhantomUser } from "@/lib/auth";
 
 interface AuthContextValue {
   isAuthorized: boolean;
-  authorize: () => void;
+  user: PhantomUser | null;
+  authorize: (user: PhantomUser) => void;
   signOut: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthorized, setIsAuthorized] = useState(() => !!getToken());
+  const [user, setUser] = useState<PhantomUser | null>(() => getSession());
 
-  const authorize = useCallback(() => setIsAuthorized(true), []);
+  const authorize = useCallback((u: PhantomUser) => setUser(u), []);
 
   const signOut = useCallback(() => {
-    clearToken();
-    setIsAuthorized(false);
+    clearSession();
+    setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthorized, authorize, signOut }}>
+    <AuthContext.Provider value={{ isAuthorized: !!user, user, authorize, signOut }}>
       {children}
     </AuthContext.Provider>
   );
