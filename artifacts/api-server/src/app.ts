@@ -34,7 +34,7 @@ app.use("/api", router);
 if (process.env.NODE_ENV === "production") {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   // From dist/index.mjs, go up to workspace root, then to phantom dist
-  const frontendDist = path.resolve(__dirname, "../../artifacts/phantom/dist/public");
+  const frontendDist = path.resolve(__dirname, "../../phantom/dist/public");
   app.use(express.static(frontendDist));
   // SPA fallback — all non-API routes return index.html (Express 5 syntax)
   app.get("/{*path}", (_req, res) => {
